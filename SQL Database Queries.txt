@@ -1,0 +1,166 @@
+-- Find the account(s) with the largest balance
+
+-- version 1: using aggregate function
+SELECT *
+  FROM accounts
+  WHERE balance >= ALL (SELECT MAX(balance) FROM accounts WHERE balance IS NOT NULL);
+
+-- version 2: w/o using an aggregate function, comparing to a set
+SELECT *
+  FROM accounts max
+WHERE balance IS NOT NULL
+  AND NOT EXISTS (SELECT * FROM accounts min WHERE min.balance > max.balance);
+
+-- version 3: w/o using an aggregate function, universal quantifier
+
+
+
+-- Lab 11: #4 For each customer younger than 30 who resides in the state
+-- of Hawaii, find the number of accounts they own on their own and
+-- the total amount of money in these accounts
+SELECT c.fname, c.lname, COUNT(a.account_number) AS total_accounts,
+       SUM(a.balance) AS total_balance
+  FROM customers c LEFT OUTER JOIN depositors d ON c.id = d.cid
+                   LEFT OUTER JOIN accounts a ON d.account_number = a.account_number
+  WHERE c.age < 30 AND c.state = 'CA'
+        AND d.account_number IN ( SELECT d2.account_number -- returns all accounts that only
+                                    FROM depositors d2     -- have one owner
+                                  GROUP BY d2.account_number
+                                  HAVING COUNT(d2.cid) = 1)
+GROUP BY c.fname, c.lname, c.street, c.zipcode;
+
+#Lab 10 Problems
+#1 - List the full name and age of California residents who have a loan and an account
+SELECT c.fname, c.lname, c.age
+FROM customers c INNER JOIN depositors d ON c.id = d.cid
+                 INNER JOIN loans l ON c.id = l.owner_id
+WHERE c.state = 'CA';
+
+#2 - List the full name of every California (originally Nevada) resident
+# in the database, along with the number of accounts each owns.
+SELECT c.fname, c.lname, COUNT(DISTINCT d.cid) AS NumOfAcc
+FROM customers c LEFT OUTER JOIN depositors d on c.id = d.cid
+  WHERE c.state = 'CA'
+GROUP BY c.id, c.fname, c.lname;
+
+#3 - Find the cities where customers reside who have a loan and an account
+# both of which are at branches that are in the same city where the customer lives.
+SELECT c.fname, c.lname, c.city
+ FROM customers c INNER JOIN depositors d ON c.id = d.cid
+                  INNER JOIN accounts a ON d.account_number = a.account_number
+                  INNER JOIN branches b1 ON a.branch_id = b1.id
+                  INNER JOIN loans l ON c.id = l.owner_id
+                  INNER JOIN branches b2 ON l.branch_id = b2.id
+WHERE (c.city = b1.city AND c.city = b2.city) AND (c.state = b1.state AND c.state = b2.state);
+
+#4 - List the full address for every branch and in addition to that,
+# also display the number of accounts held at that branch,
+# the average balance in those accounts, and
+# the number of customers owning those accounts.
+SELECT b.street, b.city, b.state, b.zipcode,
+       COUNT(DISTINCT a.account_number) AS total_accounts,
+       AVG(a.balance) AS average_balance, COUNT(DISTINCT c.id) AS total_customers
+FROM branches b LEFT OUTER JOIN accounts a ON b.id = a.branch_id
+                INNER JOIN depositors d ON a.account_number = d.account_number
+                INNER JOIN customers c ON d.cid = c.id
+GROUP BY b.street, b.city, b.state, b.zipcode;
+
+#5 - Find the customers who do all their banking (accounts and/or loans)
+# outside of their state of residence.
+SELECT c.fname, c.lname, c.street, c.city, c.state, c.zipcode
+FROM customers c INNER JOIN depositors d ON c.id = d.cid
+                 INNER JOIN accounts a ON d.account_number = a.account_number
+                 INNER JOIN branches b1 ON a.branch_id = b1.id
+                 INNER JOIN loans l ON c.id = l.owner_id
+                 INNER JOIN branches b2 ON l.branch_id = b2.id
+WHERE c.state <> b1.state AND c.state <> b2.state
+UNION
+SELECT c1.fname, c1.lname, c1.street, c1.city, c1.state, c1.zipcode
+FROM customers c1 INNER JOIN depositors d ON c1.id = d.cid
+                  INNER JOIN accounts a ON d.account_number = a.account_number
+                  INNER JOIN branches b1 ON a.branch_id = b1.id
+WHERE c1.state <> b1.state
+UNION
+SELECT c2.fname, c2.lname, c2.street, c2.city, c2.state, c2.zipcode
+FROM customers c2 INNER JOIN loans l ON c2.id = l.owner_id
+                  INNER JOIN branches b2 ON l.branch_id = b2.id
+WHERE c2.state <> b2.state;
+
+
+#3. Find the cities where customers reside who have a loan and an
+# account both of which are at branches that are in the same city where the customer lives.
+
+SELECT c.city
+FROM customers c INNER JOIN depositors d ON c.id = d.cid
+                 INNER JOIN loans l ON c.id = l.owner_id
+                 INNER JOIN branches b on l.branch_id = b.id
+WHERE (b.city AND b.state) = (c.city AND c.state);
+
+#Lab 11 Problems
+#1. For each state where there’s a branch providing loans, find the customer(s)
+# who own the loan(s) opened most recently in that state. Include in the
+# output the amount of the loan.
+SELECT b.id, b.street ,b.city, b.state, b.zipcode
+  FROM toybank.customers c INNER JOIN toybank.loans l ON c.id = l.owner_id
+                           INNER JOIN toybank.branches b ON b.id = l.branch_id
+ WHERE NOT EXISTS(SELECT *
+                    FROM toybank.customers sc INNER JOIN toybank.loans sl ON sc.id = sl.owner_id
+                                              INNER JOIN toybank.branches sb ON sl.branch_id = sb.id
+                   WHERE sl.date_opened > l.date_opened AND sb.state = b.state);
+
+#2. Find the customers who owe more money than what they have in their
+# accounts. Include in the output the total amount of money each such customer owes.
+-- wrong attempt
+SELECT c.fname, c.lname, SUM(DISTINCT l.amount) AS total_owed
+FROM customers c INNER JOIN loans l ON c.id = l.owner_id
+                 INNER JOIN depositors d on c.id = d.cid
+                 INNER JOIN accounts a on d.account_number = a.account_number
+WHERE l.amount > a.balance
+GROUP BY c.id, c.fname, c.lname;
+-- right answer
+SELECT c.fname, c.lname, recentLoan.amount AS loan_amount, recentBranch.state, recentLoan.date_opened, recentBranch.id
+  FROM loans recentLoan INNER JOIN branches recentBranch ON recentLoan.branch_id = recentBranch.id
+                        INNER JOIN customers c ON recentLoan.owner_id = c.id
+WHERE NOT EXISTS( SELECT *
+                    FROM loans l INNER JOIN branches b ON l.branch_id = b.ID
+                  WHERE l.date_opened > recentLoan.date_opened AND b.state = recentBranch.state);
+
+
+-- wrong attempt
+SELECT c.fname, c.lname, l.amount, br.id, MAX(l.date_opened)
+FROM branches br INNER JOIN loans l on br.id = l.branch_id
+                 INNER JOIN customers c on l.owner_id = c.id
+GROUP BY br.state;
+
+#4
+SELECT c.fname, c.lname, COUNT(a.account_number) AS total_accounts, SUM(a.balance) AS total_balance
+  FROM customers c  LEFT OUTER JOIN depositors d ON c.id = d.cid
+                    INNER JOIN accounts a ON d.account_number = a.account_number
+  WHERE c.age < 30 AND c.state = 'CA'
+        AND d.account_number IN(  SELECT d.account_number -- returns all accounts that only have one owner.
+                                    FROM depositors d
+                                  GROUP BY d.account_number
+                                  HAVING COUNT(d.cid) = 1)
+GROUP BY c.id, c.fname, c.lname;
+
+#6 - List the branch(es) whose customers are all in the same state as the branch
+SELECT *
+  FROM branches
+ WHERE id NOT IN (SELECT b.id
+                    FROM branches b INNER JOIN accounts a ON b.id = a.branch_id
+                                    INNER JOIN depositors d ON a.account_number = d.account_number
+                                    INNER JOIN customers c ON d.cid = c.id
+                   WHERE b.state <> c.state)
+   AND id NOT IN (SELECT b.id
+                    FROM branches b INNER JOIN loans l ON b.id = l.branch_id
+                                    INNER JOIN customers c ON l.owner_id = c.id
+                   WHERE b.state <> c.state);
+
+#7 - Retrieve every branch with the number of loans held at that branch,
+# the average amount of those loans, and the number of customers owning those loans.
+SELECT br.id, br.street, br.city, br.state, br.zipcode,
+       COUNT(l.amount) AS total_loans, AVG(l.amount) AS average_loan,
+       COUNT(l.owner_id) AS total_customers
+FROM branches br INNER JOIN loans l ON br.id = l.branch_id
+                 INNER JOIN customers c ON l.owner_id = c.id
+GROUP BY br.id, br.street, br.city, br.state, br.zipcode;
